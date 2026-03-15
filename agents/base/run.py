@@ -153,6 +153,8 @@ class ThreeHotCotRun(BaseRun):
                 result["option"] = "Abstain"
         return result
 
+MAX_REACT_STEPS = 8  # prevent infinite ReAct loops
+
 class ReActTotRun(BaseRun):
     def __init__(self):
         pass
@@ -166,6 +168,9 @@ class ReActTotRun(BaseRun):
         # best_step_status_record = step_status_record_list[0]
         history = history + best_step_status_record["record"]
         if best_step_status_record["status"] != REACT_STATUS_FINISH:
+            if index >= MAX_REACT_STEPS:
+                print(f"[WARN] Max ReAct steps ({MAX_REACT_STEPS}) reached for {agent.role_name}, forcing finish")
+                return history.split("Observation:")[-1].strip() if "Observation:" in history else history[-500:]
             return self.run(agent, question, agent_tool_env, eval_run, agents, history, index + 1)
         else:
             return history.split("Final Answer:")[1].strip()

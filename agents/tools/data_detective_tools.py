@@ -7,7 +7,20 @@ from data.metric_collect import MetricExplorer
 # error_rate: Floating point type, indicating the percentage of error requests. Calculated as (error requests / total calls) * 100.
 # average_duration: Float type, indicating the average response time (in milliseconds). Calculated as total response time/total number of calls.
 
-explorer = MetricExplorer()
+explorer = None
+
+
+def _get_explorer():
+    global explorer
+    if explorer is None:
+        explorer = MetricExplorer()
+    return explorer
+
+
+def reload_explorer():
+    """Re-create the MetricExplorer (call after changing case_data_dir)."""
+    global explorer
+    explorer = MetricExplorer()
 
 def query_endpoint_stats(endpoint: str, minute: str) -> dict:
     """
@@ -28,7 +41,7 @@ def query_endpoint_stats(endpoint: str, minute: str) -> dict:
         - 'average_duration' (float): The average response time of the requests in milliseconds. 
           This is calculated as (Total Response Time / Total Number of Calls).
     """
-    endpoint_data = explorer.query_endpoint_stats(endpoint, minute)
+    endpoint_data = _get_explorer().query_endpoint_stats(endpoint, minute)
     return endpoint_data
 
 def query_endpoint_metrics_in_range(endpoint: str, minute: str) -> dict:
@@ -53,5 +66,5 @@ def query_endpoint_metrics_in_range(endpoint: str, minute: str) -> dict:
         - 'timeout_rate' (float): The average percentage of requests that timed out.
           Calculated as (Number of Timeout Requests / Total Number of Calls) * 100.
     """
-    endpoint_data = explorer.query_endpoint_stats_in_range(endpoint, minute)
+    endpoint_data = _get_explorer().query_endpoint_stats_in_range(endpoint, minute)
     return endpoint_data

@@ -16,3 +16,14 @@ data/system_info
 data/handle_info
 data/span_info
 resource
+# Environment
+.env
+
+# Databases
+*.db
+
+# Logs
+*.log
+
+# Data directory (large dataset)
+data/

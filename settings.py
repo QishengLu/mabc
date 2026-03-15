@@ -1,10 +1,21 @@
-OPENAI_API_KEY = "sk-xxx"
+import os
+
+# shubiaobiao — Claude Sonnet 4.5
+OPENAI_API_KEY = os.environ.get(
+    "OPENAI_API_KEY",
+    "sk-TisdMcaR6FpD4yVrF63bA49cFe86429881370aB3E6629496",
+)
+OPENAI_BASE_URL = os.environ.get(
+    "OPENAI_BASE_URL",
+    "https://api.shubiaobiao.cn/v1",
+)
 
 OPENAI_MAX_RETRIES = 10
 OPENAI_RETRY_SLEEP = 30
-# OPENAI_MODEL = "gpt-3.5-turbo"
-# OPENAI_MODEL = "gpt-4"
-OPENAI_MODEL = "gpt-4-turbo"
+# OPENAI_MODEL = "gpt-4-turbo"
+# OPENAI_MODEL = "kimi-k2-0905-preview"
+# OPENAI_MODEL = "anthropic/claude-sonnet-4.5"
+OPENAI_MODEL = "claude-sonnet-4-6"
 
 # AGENT_STATUS_START = "Start"
 # AGENT_STATUS_RE = "Reason"

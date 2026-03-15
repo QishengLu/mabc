@@ -1,4 +1,4 @@
-def assess_fault_probability(self, node, metrics):
+def assess_fault_probability(node, metrics):
     """
     Assess the fault probability of a node based on performance metrics.
     

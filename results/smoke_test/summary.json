@@ -1,0 +1,10 @@
+{
+  "run_id": "smoke_test",
+  "total_cases": 1,
+  "evaluated": 1,
+  "correct": 0,
+  "failed": 0,
+  "skipped": 0,
+  "ac1": 0.0,
+  "elapsed_s": 290.7
+}

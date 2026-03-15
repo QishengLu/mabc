@@ -1,6 +1,6 @@
-from fault_web import FaultWeb
+from agents.tools.fault_web import FaultWeb
 
-def update_fault_web(self, fault_web, fault_probabilities, dependencies):
+def update_fault_web(fault_web, fault_probabilities, dependencies):
     """
     Update the Fault Web visualization with the given fault probability information and dependencies between nodes.
     
