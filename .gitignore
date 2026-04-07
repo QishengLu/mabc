@@ -18,6 +18,7 @@ data/span_info
 resource
 # Environment
 .env
+settings.py
 
 # Databases
 *.db
