@@ -185,8 +185,33 @@ def run_mabc(case_dir):
         f"which represent the dependency relationship between services.\n\n"
         f"Alert: Service {alert_svc} experiencing a significant increase in response time at {timestamp}.\n"
         f"Task: Please find the root cause service behind the alerting service {alert_svc} "
-        f"by analyzing the metric of service and the call trace.\n"
-        f"Format: Root Cause Endpoint: XXX, Root Cause Reason: XXX\n"
+        f"by analyzing the metric of service and the call trace, "
+        f"and build a causal propagation graph showing how the fault propagated through the system.\n\n"
+        f"During your investigation, keep track of:\n"
+        f"- Which services are affected (nodes) and their abnormal state\n"
+        f"- How faults propagate between services (edges)\n"
+        f"- Which service(s) are the root cause (the origin of the fault propagation)\n\n"
+        f"## Required Output Format\n\n"
+        f"Your final answer MUST be a CausalGraph JSON with this structure:\n"
+        f"```json\n"
+        f'{{\n'
+        f'  "nodes": [\n'
+        f'    {{"component": "ts-xxx-service", "kind": "service", "state": ["HIGH_LATENCY"], "timestamp": 1234567890}}\n'
+        f'  ],\n'
+        f'  "edges": [\n'
+        f'    {{"source": "ts-a-service", "target": "ts-b-service", "kind": "calls"}}\n'
+        f'  ],\n'
+        f'  "root_causes": [\n'
+        f'    {{"component": "ts-xxx-service", "kind": "service", "state": ["HIGH_ERROR_RATE"], "timestamp": 1234567890}}\n'
+        f'  ],\n'
+        f'  "component_to_service": {{}}\n'
+        f'}}\n'
+        f"```\n\n"
+        f"**Available States**: HEALTHY, HIGH_ERROR_RATE, HIGH_LATENCY, UNAVAILABLE, "
+        f"TIMEOUT, HIGH_CPU, HIGH_MEMORY, HIGH_DISK_USAGE, NETWORK_DELAY, NETWORK_LOSS, "
+        f"KILLED, PROCESS_PAUSED, CONNECTION_RESET\n\n"
+        f"**Available Node Kinds**: service, pod, container, span, deployment\n"
+        f"**Available Edge Kinds**: calls, depends_on, affects, routes_to\n"
     )
 
     # Stage 1: ProcessScheduler
@@ -253,10 +278,7 @@ def extract_root_cause(answer):
 
 
 def build_graph_output(predicted_rc, final_answer):
-    """Build minimal CausalGraph JSON from mABC results.
-
-    mABC is used as a baseline for AC@1 comparison only — nodes/edges are not needed.
-    """
+    """Build minimal CausalGraph JSON from mABC results (fallback only)."""
     root_causes = []
     if predicted_rc:
         reason_match = re.search(
@@ -271,6 +293,72 @@ def build_graph_output(predicted_rc, final_answer):
         "root_causes": root_causes,
     }
     return json.dumps(graph, ensure_ascii=False)
+
+
+def _strip_markdown_json(text):
+    """Strip ```json ... ``` code blocks, extract pure JSON."""
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    return text.strip()
+
+
+def compress_findings(trajectory_messages, compress_sp, compress_up, question):
+    """Call LLM with compress prompts to synthesize a full CausalGraph JSON.
+
+    Returns the CausalGraph JSON string, or None on failure.
+    """
+    from settings import (
+        OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL,
+        OPENAI_MAX_RETRIES, OPENAI_RETRY_SLEEP,
+    )
+    from openai import OpenAI
+
+    # Build messages: system + trajectory context + compress user prompt
+    messages = [{"role": "system", "content": compress_sp}]
+
+    # Add trajectory as conversation context
+    for msg in trajectory_messages:
+        role = msg.get("role", "assistant")
+        content = msg.get("content", "")
+        if role == "tool":
+            messages.append({"role": "user", "content": f"[Tool Result]\n{content}"})
+        else:
+            messages.append({"role": role, "content": content})
+
+    # Add the compress user prompt with incident description
+    incident_desc = question[:500] if question else "Unknown incident"
+    final_up = compress_up.replace("{incident_description}", incident_desc)
+    messages.append({"role": "user", "content": final_up})
+
+    client = OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL)
+
+    for attempt in range(OPENAI_MAX_RETRIES):
+        try:
+            response = client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=messages,
+                temperature=0.0,
+            )
+            raw = response.choices[0].message.content or ""
+            print(f"[Compress] response (first 500 chars): {raw[:500]}", file=sys.stderr)
+
+            # Parse and validate
+            cleaned = _strip_markdown_json(raw)
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict) and "root_causes" in parsed:
+                parsed.setdefault("nodes", [])
+                parsed.setdefault("edges", [])
+                parsed.setdefault("component_to_service", {})
+                return json.dumps(parsed, ensure_ascii=False)
+            print(f"[Compress] output missing root_causes: {cleaned[:200]}", file=sys.stderr)
+            break  # LLM returned something but not valid — don't retry
+        except Exception as e:
+            print(f"[Compress] attempt {attempt+1}/{OPENAI_MAX_RETRIES} failed: {e}", file=sys.stderr)
+            if attempt < OPENAI_MAX_RETRIES - 1:
+                time.sleep(OPENAI_RETRY_SLEEP)
+
+    return None
 
 
 def build_trajectory(answer1, answer2):
@@ -308,10 +396,23 @@ def main():
     # Run mABC
     answer1, answer2 = run_mabc(case_dir)
 
-    # Extract results
-    predicted_rc = extract_root_cause(answer2) or extract_root_cause(answer1)
-    graph_output = build_graph_output(predicted_rc, answer2 or answer1)
+    # Build trajectory
     trajectory = build_trajectory(answer1, answer2)
+
+    # Compress findings into full CausalGraph
+    compress_sp = payload.get("compress_system_prompt", "")
+    compress_up = payload.get("compress_user_prompt", "")
+
+    graph_output = None
+    if compress_sp and compress_up:
+        print("[mABC] Running compress step to generate full CausalGraph...", file=sys.stderr)
+        graph_output = compress_findings(trajectory, compress_sp, compress_up, question)
+
+    # Fallback: root_causes only (no nodes/edges)
+    if not graph_output:
+        print("[mABC] Compress step skipped or failed, falling back to root_causes only", file=sys.stderr)
+        predicted_rc = extract_root_cause(answer2) or extract_root_cause(answer1)
+        graph_output = build_graph_output(predicted_rc, answer2 or answer1)
 
     result = {
         "output": graph_output,
