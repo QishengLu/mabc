@@ -252,14 +252,36 @@ python scripts/run_rollout.py --agent mabc --source_exp_id <exp_id> --limit 1
 # 全量运行
 nohup python -u scripts/run_rollout.py --agent mabc --source_exp_id <exp_id> \
   > rollout_mabc.log 2>&1 &
+
+# 带每样本实时日志（通过 run_rollout_with_retry.py + --log_dir）
+python scripts/run_rollout_with_retry.py --agent mabc-qwen \
+  --source_exp_id mabc-qwen3.5-plus \
+  --max_concurrency 1 --initial_concurrency 1 \
+  --log_dir logs/tmux-parallel/mabc-qwen3.5-plus
 ```
 
-配置文件：`RolloutRunner/configs/agents/mabc.yaml`
+配置文件：`RolloutRunner/configs/agents/mabc.yaml` (claude) / `mabc-qwen.yaml` (qwen3.5-plus)
 
 agent_runner.py 的 case 数据查找策略：
 1. 尝试匹配 `data_dir` 路径名到 `mABC/data/cases/`
 2. 从 `question` 文本中提取 case 名
 3. 若 `data_dir` 含 parquet 文件，实时转换为 mABC JSON
+
+### `--log-file` 参数（2026-04-14 新增）
+
+`agent_runner.py` 支持 `--log-file <path>` 参数，把所有 stderr 输出 + Python logging 同时写到文件：
+
+```bash
+python agent_runner.py --log-file logs/mabc_idx_5.log < payload.json
+```
+
+实现机制（参考 Deep_Research/agent_runner.py 和 aiq/agent_runner.py）：
+
+1. **`_TeeStream` 类**：替换 `sys.stderr`，对每次 write 同时写到原始 stderr 和文件。mABC 通过 `print(..., file=sys.stderr)` 输出进度（`[mABC] ...`），这部分被 tee 捕获。
+2. **`logging.FileHandler`**：附加到 root logger，捕获 httpx/OpenAI SDK 等库通过 Python logging 输出的内容（如 `HTTP Request: POST ... "HTTP/1.1 200 OK"`）。
+3. **argparse with `parse_known_args()`**：支持 `--log-file` CLI 参数，未知参数不会报错。
+
+用途：在 `run_rollout_with_retry.py --log_dir` 批量跑时，每个样本自动生成独立日志文件（`idx_N_sample_M.log`），可以 `tail -f` 实时查看任意样本的 ReAct 循环进度（例如 ProcessScheduler 调度哪个子 Agent、SolutionEngineer 给出什么结论）。
 
 ---
 
@@ -281,7 +303,7 @@ agent_runner.py 的 case 数据查找策略：
 | `agents/tools/data_detective_tools.py` | 加 `reload_explorer()` 支持 per-case 重载 |
 | `convert_all.py` | 新建，500 case 批量转换脚本 |
 | `run_batch.py` | 新建，批量评测脚本（AC@1 计算 + 断点恢复） |
-| `agent_runner.py` | 新建，RolloutRunner 标准 stdin/stdout 接口 |
+| `agent_runner.py` | 新建，RolloutRunner 标准 stdin/stdout 接口；2026-04-14 加 `--log-file` 支持（TeeStream + FileHandler 双路捕获）|
 
 ---
 
