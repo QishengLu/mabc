@@ -6,7 +6,9 @@ stdin:  JSON { question, system_prompt, user_prompt,
                compress_system_prompt, compress_user_prompt, data_dir }
 stdout: JSON { output (CausalGraph JSON), trajectory (OpenAI 格式) }
 """
+import argparse
 import json
+import logging
 import os
 import re
 import sys
@@ -377,7 +379,70 @@ def build_trajectory(answer1, answer2):
     return trajectory
 
 
+class _TeeStream:
+    """Write to both original stream and a log file simultaneously."""
+
+    def __init__(self, original, file_obj):
+        self.original = original
+        self.f = file_obj
+
+    def write(self, data):
+        self.original.write(data)
+        try:
+            self.f.write(data)
+        except Exception:
+            pass
+        return len(data)
+
+    def flush(self):
+        self.original.flush()
+        try:
+            self.f.flush()
+        except Exception:
+            pass
+
+    def isatty(self):
+        return False
+
+    def fileno(self):
+        return self.original.fileno()
+
+
+def _install_log_file(log_path: str) -> None:
+    """
+    捕获所有 stderr 输出 + Python logging 到 log 文件。mABC 用 print(..., file=sys.stderr)
+    和库自带的 logging 两种方式输出进度，这里同时装两个 hook 覆盖：
+      1. TeeStream：替换 sys.stderr，捕获所有 print 到 stderr 的内容
+      2. logging.FileHandler：捕获 httpx/openai SDK 等通过 logging 模块的输出
+
+    参考 Deep_Research/agent_runner.py 和 aiq/agent_runner.py 的同类实现。
+    """
+    os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
+    f = open(log_path, "w", encoding="utf-8", buffering=1)  # line-buffered
+    sys.stderr = _TeeStream(sys.__stderr__, f)
+
+    fmt = logging.Formatter(
+        "%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    fh = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+    fh.setFormatter(fmt)
+    fh.setLevel(logging.INFO)
+    logging.getLogger().addHandler(fh)
+    logging.getLogger().setLevel(logging.INFO)
+
+
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--log-file",
+        default=None,
+        help="Write stderr + logging output to file (in addition to stderr)",
+    )
+    args, _ = parser.parse_known_args()
+    if args.log_file:
+        _install_log_file(args.log_file)
+
     payload = json.loads(sys.stdin.read())
 
     question = payload.get("question", "")
